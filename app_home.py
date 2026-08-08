@@ -192,6 +192,7 @@ class AppHome:
 
         self.image_photo = None
         self.annotated_photo = None
+        self.last_plot_data = None
 
         self._build_ui()
 
@@ -317,7 +318,14 @@ class AppHome:
             text="Generate Preview",
             command=self.update_plot,
         )
-        self.generate_btn.pack(fill="x", pady=(10, 0))
+        self.generate_btn.pack(fill="x", pady=(10, 4))
+
+        self.export_btn = ttk.Button(
+            control_frame,
+            text="Export Preview Image",
+            command=self.export_preview_image,
+        )
+        self.export_btn.pack(fill="x", pady=(0, 10))
 
         right_frame = ttk.Frame(container)
         right_frame.grid(row=0, column=1, sticky="nsew")
@@ -496,9 +504,69 @@ class AppHome:
         plot_relative(self.ax, moves)
         self.canvas.draw()
 
+        self.last_plot_data = {
+            "moves": moves,
+            "width": width,
+            "height": height,
+            "baseline_y": baseline_y,
+            "text": text,
+            "scale": scale,
+            "vertical_offset": vertical_offset,
+            "horizontal_offset": horizontal_offset,
+            "spacing": spacing,
+        }
+
         self.coords_text.delete("1.0", tk.END)
         self.coords_text.insert(tk.END, "\n".join(str(item) for item in moves))
         self.status_label.config(text="Cursive preview generated")
+
+    def export_preview_image(self):
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[
+                ("PNG Image", "*.png"),
+                ("JPEG Image", "*.jpg;*.jpeg"),
+                ("PDF File", "*.pdf"),
+            ],
+            title="Export preview as image",
+        )
+        if not file_path:
+            return
+
+        if not self.last_plot_data:
+            messagebox.showwarning("No Preview", "Please generate a preview before exporting.")
+            return
+
+        data = self.last_plot_data
+        save_width = max(8, data["width"] / 2.54)
+        save_height = max(6, data["height"] / 2.54)
+        save_dpi = 300
+
+        export_fig = plt.Figure(figsize=(save_width, save_height), dpi=save_dpi)
+        export_ax = export_fig.add_subplot(111)
+        export_ax.set_facecolor("#f9f9f9")
+        export_ax.set_aspect("equal", adjustable="box")
+        export_ax.axis("off")
+
+        for y in range(0, int(data["height"]) + 1):
+            export_ax.plot([0, data["width"]], [y, y], color="#c0c0ff", linewidth=0.6)
+
+        export_ax.plot([0, data["width"], data["width"], 0, 0], [0, 0, data["height"], data["height"], 0], color="black", linewidth=1)
+        export_ax.plot([0, data["width"]], [data["baseline_y"], data["baseline_y"]], color="#c34243", linestyle="--", linewidth=0.8)
+        export_ax.set_xlim(0, data["width"])
+        export_ax.set_ylim(0, data["height"])
+        export_ax.invert_yaxis()
+        export_ax.set_xlabel("cm")
+        export_ax.set_ylabel("cm")
+        export_ax.set_title("Cursive CNC Writing Preview")
+
+        plot_relative(export_ax, data["moves"])
+
+        try:
+            export_fig.savefig(file_path, dpi=save_dpi, bbox_inches="tight")
+            self.status_label.config(text=f"Preview exported: {file_path}")
+        except Exception as exc:
+            messagebox.showerror("Save Error", f"Could not save preview image:\n{exc}")
 
 
 if __name__ == "__main__":
