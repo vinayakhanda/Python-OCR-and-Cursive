@@ -183,6 +183,180 @@ def plot_relative(ax, moves):
         ax.plot(xs, ys, "k", linewidth=1)
 
 
+class DrawingCanvasPanel:
+    def __init__(self, parent):
+        self.parent = parent
+        self.strokes = []
+        self.current_stroke = []
+        self._build_ui()
+
+    def _build_ui(self):
+        control_frame = ttk.Frame(self.parent, padding=10)
+        control_frame.pack(side=tk.LEFT, fill=tk.Y)
+
+        ttk.Label(
+            control_frame, text="Drawing Controls", font=("Arial", 10, "bold")
+        ).pack(anchor="w", pady=(0, 10))
+
+        ttk.Label(control_frame, text="Pixels per Unit (cm):").pack(
+            anchor="w", pady=(5, 0)
+        )
+        self.scale_var = tk.DoubleVar(value=50.0)
+        self.scale_entry = ttk.Entry(
+            control_frame, textvariable=self.scale_var, width=15
+        )
+        self.scale_entry.pack(anchor="w", pady=(0, 15))
+
+        self.generate_btn = ttk.Button(
+            control_frame,
+            text="Output Coordinates",
+            command=self.output_coordinates,
+        )
+        self.generate_btn.pack(fill=tk.X, pady=5)
+
+        self.clear_btn = ttk.Button(
+            control_frame, text="Clear Canvas", command=self.clear_canvas
+        )
+        self.clear_btn.pack(fill=tk.X, pady=5)
+
+        instructions = (
+            "Instructions:\n"
+            "1. Left-click & drag on canvas to draw.\n"
+            "2. Release mouse to end a stroke.\n"
+            "3. Click 'Output Coordinates' to generate\n"
+            "   relative CNC movement data."
+        )
+        ttk.Label(
+            control_frame,
+            text=instructions,
+            font=("Arial", 8),
+            foreground="gray",
+        ).pack(anchor="w", pady=20)
+
+        sidebar_frame = ttk.Frame(self.parent, padding=10)
+        sidebar_frame.pack(side=tk.RIGHT, fill=tk.Y)
+
+        ttk.Label(
+            sidebar_frame,
+            text="Output Coordinates:",
+            font=("Arial", 10, "bold"),
+        ).pack(anchor="w", pady=(0, 5))
+
+        txt_container = ttk.Frame(sidebar_frame)
+        txt_container.pack(fill=tk.BOTH, expand=True)
+
+        scrollbar = ttk.Scrollbar(txt_container)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.coords_text = tk.Text(
+            txt_container,
+            width=25,
+            font=("Consolas", 9),
+            yscrollcommand=scrollbar.set,
+            wrap=tk.NONE,
+        )
+        self.coords_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=self.coords_text.yview)
+
+        self.canvas_frame = ttk.Frame(self.parent, padding=10)
+        self.canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.canvas = tk.Canvas(
+            self.canvas_frame, bg="white", cursor="crosshair"
+        )
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+
+        self.canvas.bind("<ButtonPress-1>", self.on_press)
+        self.canvas.bind("<B1-Motion>", self.on_drag)
+        self.canvas.bind("<ButtonRelease-1>", self.on_release)
+
+        self.clear_canvas()
+
+    def on_press(self, event):
+        self.current_stroke = [(event.x, event.y)]
+
+    def on_drag(self, event):
+        if self.current_stroke:
+            x_prev, y_prev = self.current_stroke[-1]
+            self.canvas.create_line(
+                x_prev, y_prev, event.x, event.y, fill="black", width=2
+            )
+            self.current_stroke.append((event.x, event.y))
+
+    def on_release(self, event):
+        if self.current_stroke:
+            self.strokes.append(self.current_stroke)
+            self.current_stroke = []
+
+    def clear_canvas(self):
+        self.canvas.delete("all")
+        self.strokes = []
+        self.coords_text.config(state=tk.NORMAL)
+        self.coords_text.delete("1.0", tk.END)
+        self.coords_text.config(state=tk.DISABLED)
+
+    def generate_relative_moves(self):
+        try:
+            scale = float(self.scale_var.get())
+            if scale <= 0:
+                scale = 1.0
+        except ValueError:
+            scale = 50.0
+
+        relative_moves = []
+        pen_is_down = False
+        prev_pt = None
+
+        for stroke in self.strokes:
+            if not stroke:
+                continue
+
+            if pen_is_down:
+                relative_moves.append("UP")
+                pen_is_down = False
+
+            for i, (x, y) in enumerate(stroke):
+                scaled_x = x / scale
+                scaled_y = y / scale
+
+                if i == 0:
+                    if prev_pt is None:
+                        dx = round(scaled_x, 3)
+                        dy = round(scaled_y, 3)
+                    else:
+                        dx = round(scaled_x - prev_pt[0], 3)
+                        dy = round(scaled_y - prev_pt[1], 3)
+
+                    if (dx, dy) != (0, 0):
+                        relative_moves.append((dx, dy))
+
+                    relative_moves.append("DOWN")
+                    pen_is_down = True
+                    prev_pt = (scaled_x, scaled_y)
+                else:
+                    dx = round(scaled_x - prev_pt[0], 3)
+                    dy = round(scaled_y - prev_pt[1], 3)
+
+                    if (dx, dy) != (0, 0):
+                        relative_moves.append((dx, dy))
+                    prev_pt = (scaled_x, scaled_y)
+
+            relative_moves.append("UP")
+            pen_is_down = False
+
+        return relative_moves
+
+    def output_coordinates(self):
+        moves = self.generate_relative_moves()
+
+        self.coords_text.config(state=tk.NORMAL)
+        self.coords_text.delete("1.0", tk.END)
+
+        formatted_coords = "\n".join(str(move) for move in moves)
+        self.coords_text.insert(tk.END, formatted_coords)
+        self.coords_text.config(state=tk.DISABLED)
+
+
 class AppHome:
     def __init__(self, root):
         self.root = root
@@ -202,15 +376,21 @@ class AppHome:
 
         self.ocr_tab = ttk.Frame(notebook)
         self.cursive_tab = ttk.Frame(notebook)
+        self.drawing_tab = ttk.Frame(notebook)
 
         notebook.add(self.ocr_tab, text="OCR Image Viewer")
         notebook.add(self.cursive_tab, text="Cursive CNC Preview")
+        notebook.add(self.drawing_tab, text="Manual Drawing")
 
         self._build_ocr_tab()
         self._build_cursive_tab()
+        self._build_drawing_tab()
 
         self.status_label = ttk.Label(self.root, text="Ready", anchor="w")
         self.status_label.pack(fill="x", padx=10, pady=(0, 8))
+
+    def _build_drawing_tab(self):
+        self.drawing_panel = DrawingCanvasPanel(self.drawing_tab)
 
     def _build_ocr_tab(self):
         top_frame = ttk.Frame(self.ocr_tab, padding=10)
